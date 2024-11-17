@@ -1,101 +1,218 @@
-import Image from "next/image";
+"use client"
 
-export default function Home() {
+import { AppSidebar } from "@/components/app-sidebar"
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb"
+import { Separator } from "@/components/ui/separator"
+import {
+  SidebarInset,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar"
+import { useSearchParams } from "next/navigation"
+import React from "react"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+
+interface Message {
+  senderID: string;
+  recipientID: string;
+  sender: string;
+  text: string;
+  time: string;
+}
+
+// This is sample data
+const users = [
+  {
+      name: "Harvey",
+      email: "tsenh@farmingdale.edu",
+      avatar: "/avatars/harvey.jpg",
+      clientID: "1",
+  },
+  {
+      name: "Harry",
+      email: "potterh@farmingdale.edu",
+      avatar: "/avatars/harry.jpg",
+      clientID: "2",
+  },
+  {
+      name: "Jon",
+      email: "snowj@farmingdale.edu",
+      avatar: "/avatars/jon.jpg",
+      clientID: "3",
+  }
+]
+
+export default function Page() {
+  const searchParams = useSearchParams()
+  const clientID = searchParams.get("user") || users[0].clientID
+  const peerID = searchParams.get("peer") || undefined;
+  const [messages, setMessages] = React.useState<Message[]>([]);
+  const [newMessage, setNewMessage] = React.useState("");
+
+  React.useEffect(() => {
+    const fetchMessages = async () => {
+      if (clientID) {
+        const response = await fetch(`/api/messages/${clientID}`);
+        if (response.ok) {
+          const data = await response.json();
+          const decryptedMessages: Message[] = await Promise.all(
+            data.map(async (message: any) => {
+              const iv = Uint8Array.from(atob(message.message.iv), c => c.charCodeAt(0));
+              const ciphertext = Uint8Array.from(atob(message.message.ciphertext), c => c.charCodeAt(0));
+              const sharedKey = Uint8Array.from(atob(message.message.shared_key), c => c.charCodeAt(0));
+
+              const key = await crypto.subtle.importKey(
+                "raw",
+                sharedKey,
+                { name: "AES-CBC" },
+                false,
+                ["decrypt"]
+              );
+
+              const decrypted = await crypto.subtle.decrypt(
+                { name: "AES-CBC", iv: iv },
+                key,
+                ciphertext
+              );
+
+              const decryptedMessage = new TextDecoder().decode(decrypted);
+
+              // Verify integrity using the hash
+              const encoder = new TextEncoder();
+              const data = encoder.encode(decryptedMessage);
+              const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+              const hashArray = Array.from(new Uint8Array(hashBuffer));
+              const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+              if (hashHex !== message.message.hash) {
+                console.error('Message integrity check failed');
+                return {
+                  senderID: message.sender,
+                  recipientID: message.recipient,
+                  sender: message.sender,
+                  text: 'Message integrity check failed',
+                  time: new Date(message.timestamp * 1000).toLocaleString()
+                };
+              }
+
+              return {
+                senderID: message.sender,
+                recipientID: message.recipient,
+                sender: users.find(user => user.clientID === message.sender)?.name || message.sender,
+                text: decryptedMessage,
+                time: new Date(message.timestamp * 1000).toLocaleString()
+              };
+            })
+          );
+          console.log(decryptedMessages);
+          setMessages(decryptedMessages);
+        } else {
+          console.error(`Failed to fetch messages: ${response.statusText}`);
+        }
+      }
+    };
+
+    fetchMessages();
+  }, [clientID]);
+
+  const handleSendMessage = async () => {
+    if (newMessage.trim() && clientID && peerID) {
+      // Construct the JSON body
+      const body = {
+        sender: clientID,
+        content: {
+          recipient: peerID,
+          message: newMessage
+        }
+      };
+
+      // Send the JSON body to the backend
+      const response = await fetch('/api/send', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log('Message sent:', result);
+
+        // Add the new message to the local state
+        const newMsg: Message = {
+          senderID: clientID,
+          recipientID: peerID,
+          sender: users.find(user => user.clientID === clientID)?.name || 'You',
+          text: newMessage,
+          time: new Date().toLocaleString()
+        };
+        setMessages([...messages, newMsg]);
+        setNewMessage("");
+      } else {
+        console.error('Failed to send message:', response.statusText);
+      }
+    }
+  };
+
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
-
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+    <SidebarProvider
+      style={
+        {
+          "--sidebar-width": "350px",
+        } as React.CSSProperties
+      }
+    >
+      <AppSidebar />
+      <SidebarInset className="flex flex-col h-screen">
+        <header className="sticky top-0 flex shrink-0 items-center gap-2 border-b bg-background p-4">
+          <SidebarTrigger className="-ml-1" />
+          <Separator orientation="vertical" className="mr-2 h-4" />
+          <Breadcrumb>
+            <BreadcrumbList>
+              <BreadcrumbItem className="hidden md:block">
+                <BreadcrumbLink href="#">All Inboxes</BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator className="hidden md:block" />
+              <BreadcrumbItem>
+                <BreadcrumbPage>Inbox</BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
+        </header>
+        <div className="flex-1 overflow-auto p-4">
+          {messages
+             .filter(message => 
+              (message.senderID === peerID && message.recipientID === clientID) ||
+              (message.senderID === clientID && message.recipientID === peerID)
+            )
+            .map((message, index) => (
+              <div key={index} className={`border p-2 rounded-md mb-2 ${message.senderID === clientID ? 'bg-blue-100 ml-auto' : 'bg-gray-100'}`} style={{maxWidth: '70%'}}>
+                <p><strong>{message.sender}</strong></p>
+                <p>{message.text}</p>
+                <p className="text-xs text-gray-500">{message.time}</p>
+              </div>
+          ))}
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
+        <div className="p-4 border-t flex">
+          <Input
+            type="text"
+            placeholder="Type a message..."
+            value={newMessage}
+            onChange={(e) => setNewMessage(e.target.value)}
+            className="flex-grow mr-2"
           />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
-  );
+          <Button onClick={handleSendMessage}>Send</Button>
+        </div>
+      </SidebarInset>
+    </SidebarProvider>
+  )
 }
